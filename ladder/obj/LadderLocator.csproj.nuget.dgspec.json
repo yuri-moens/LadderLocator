@@ -1,0 +1,49 @@
+{
+  "format": 1,
+  "restore": {
+    "/Users/ishanjalan/Downloads/ladder/LadderLocator.csproj": {}
+  },
+  "projects": {
+    "/Users/ishanjalan/Downloads/ladder/LadderLocator.csproj": {
+      "version": "1.0.0",
+      "restore": {
+        "projectUniqueName": "/Users/ishanjalan/Downloads/ladder/LadderLocator.csproj",
+        "projectName": "LadderLocator",
+        "projectPath": "/Users/ishanjalan/Downloads/ladder/LadderLocator.csproj",
+        "packagesPath": "/Users/ishanjalan/.nuget/packages/",
+        "outputPath": "/Users/ishanjalan/Downloads/ladder/obj/",
+        "projectStyle": "PackageReference",
+        "configFilePaths": [
+          "/Users/ishanjalan/.config/NuGet/NuGet.Config"
+        ],
+        "originalTargetFrameworks": [
+          "net452"
+        ],
+        "sources": {
+          "https://api.nuget.org/v3/index.json": {}
+        },
+        "frameworks": {
+          "net452": {
+            "projectReferences": {}
+          }
+        },
+        "warningProperties": {
+          "warnAsError": [
+            "NU1605"
+          ]
+        }
+      },
+      "frameworks": {
+        "net452": {
+          "dependencies": {
+            "Pathoschild.Stardew.ModBuildConfig": {
+              "target": "Package",
+              "version": "[3.0.0, )"
+            }
+          },
+          "runtimeIdentifierGraphPath": "/usr/local/share/dotnet/sdk/3.0.100/RuntimeIdentifierGraph.json"
+        }
+      }
+    }
+  }
+}
