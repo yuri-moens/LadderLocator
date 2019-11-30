@@ -1,7 +1,0 @@
-/Users/ishanjalan/Downloads/ladder/obj/Debug/net452/LadderLocator.csprojAssemblyReference.cache
-/Users/ishanjalan/Downloads/ladder/obj/Debug/net452/LadderLocator.AssemblyInfoInputs.cache
-/Users/ishanjalan/Downloads/ladder/obj/Debug/net452/LadderLocator.AssemblyInfo.cs
-/Users/ishanjalan/Downloads/ladder/bin/Debug/net452/LadderLocator.dll
-/Users/ishanjalan/Downloads/ladder/bin/Debug/net452/LadderLocator.pdb
-/Users/ishanjalan/Downloads/ladder/obj/Debug/net452/LadderLocator.dll
-/Users/ishanjalan/Downloads/ladder/obj/Debug/net452/LadderLocator.pdb
