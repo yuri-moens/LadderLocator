@@ -33,4 +33,4 @@ For information on specifying keybinds for Key Combination List type settings, s
 | Sprite | Draws a duplicate over the rock sprite, making it a bit darker. Same tint rules as `Image` |
 
 ## Source Code
-[The Github](https://github.com/FinalDoom/LadderLocator)
+[The Github](https://github.com/yuri-moens/LadderLocator)
