@@ -28,20 +28,12 @@ namespace LadderLocator
             _pixelTexture = new Texture2D(Game1.graphics.GraphicsDevice, 1, 1, false, SurfaceFormat.Color);
             var colorArray = Enumerable.Range(0, 1).Select(i => Color.White).ToArray();
             _pixelTexture.SetData(colorArray);
-            _imageTexture = LoadPicture("Mods/LadderLocator/" + _config.HighlightImageFilename);
+            _imageTexture = helper.Content.Load<Texture2D>(_config.HighlightImageFilename, ContentSource.ModFolder);
             _ladderStones = new List<LadderStone>();
             Helper.Events.GameLoop.UpdateTicked += OnUpdateTicked;
             Helper.Events.Display.RenderedWorld += OnRenderedWorld;
             Helper.Events.Input.ButtonPressed += OnButtonPressed;
             Helper.Events.Player.Warped += OnWarped;
-        }
-
-        private Texture2D LoadPicture(string filename)
-        {
-            FileStream stream = File.Open(filename, FileMode.Open);
-            Texture2D texture = Texture2D.FromStream(Game1.graphics.GraphicsDevice, stream);
-            stream.Dispose();
-            return texture;
         }
 
         private void OnUpdateTicked(object sender, UpdateTickedEventArgs e)
