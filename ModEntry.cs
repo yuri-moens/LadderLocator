@@ -16,9 +16,9 @@ namespace LadderLocator
 {
     internal class ModEntry : Mod
     {
-        private static int _stones;
         private static List<int> _selectedNodeTypeIndices;
         private static List<NodeStone> _nodeStones;
+        private static bool _nodesSetUp;
         private static ModConfig _config;
         private static Texture2D _pixelTexture;
         private static Texture2D _imageTexture;
@@ -33,32 +33,24 @@ namespace LadderLocator
             _pixelTexture.SetData(colorArray);
             _imageTexture = helper.Content.Load<Texture2D>(_config.HighlightImageFilename, ContentSource.ModFolder);
             _ladderStones = new List<LadderStone>();
-            _stones = 0;
             _selectedNodeTypeIndices = RadarNode.All.Where(radarNode => _config.NodeTypes.Contains(radarNode.type))
                 .OrderBy(radarNode => radarNode.value).Select(radarNode => radarNode.spriteIndex).ToList();
             _nodeStones = new List<NodeStone>();
+            _nodesSetUp = false;
             Helper.Events.GameLoop.UpdateTicked += OnUpdateTicked;
             Helper.Events.Display.RenderedWorld += OnRenderedWorld;
             Helper.Events.Input.ButtonPressed += OnButtonPressed;
             Helper.Events.Player.Warped += OnWarped;
         }
 
-        private Texture2D LoadPicture(string filename)
-        {
-            FileStream stream = File.Open(filename, FileMode.Open);
-            Texture2D texture = Texture2D.FromStream(Game1.graphics.GraphicsDevice, stream);
-            stream.Dispose();
-            return texture;
-        }
-
         private void OnUpdateTicked(object sender, UpdateTickedEventArgs e)
         {
             if (!e.IsOneSecond) return;
+            if (_config.NodeRadar && !_nodesSetUp && (Game1.mine != null || Game1.currentLocation is StardewValley.Locations.VolcanoDungeon || Game1.currentLocation is StardewValley.Locations.Mountain)) FindNodes();
             if (Game1.mine == null) return;
             var ladderHasSpawned = Helper.Reflection.GetField<bool>(Game1.mine, "ladderHasSpawned").GetValue();
             if (ladderHasSpawned) _ladderStones.Clear();
             else if (_ladderStones.Count == 0) FindLadders();
-            if (_config.NodeRadar) FindNodes();
             if (!_config.ForceShafts || Game1.mine.getMineArea() != StardewValley.Locations.MineShaft.desertArea || _nextIsShaft ||
                 _ladderStones.Count <= 0) return;
             var mineRandom = Helper.Reflection.GetField<Random>(Game1.mine, "mineRandom").GetValue();
@@ -69,56 +61,39 @@ namespace LadderLocator
                 next = r.NextDouble();
                 mineRandom.NextDouble();
             }
-
             _nextIsShaft = true;
         }
 
         private void FindLadders()
         {
-            var layerWidth = Game1.mine.map.Layers[0].LayerWidth;
-            var layerHeight = Game1.mine.map.Layers[0].LayerHeight;
-            var netStonesLeftOnThisLevel = Helper.Reflection
-                .GetField<NetIntDelta>(Game1.mine, "netStonesLeftOnThisLevel").GetValue().Value;
             var ladderHasSpawned = Helper.Reflection.GetField<bool>(Game1.mine, "ladderHasSpawned").GetValue();
             if (ladderHasSpawned || Game1.mine.mustKillAllMonstersToAdvance() || !Game1.mine.shouldCreateLadderOnThisLevel()) return;
+            var netStonesLeftOnThisLevel = Helper.Reflection
+                .GetField<NetIntDelta>(Game1.mine, "netStonesLeftOnThisLevel").GetValue().Value;
             var chance = 0.02 + 1.0 / Math.Max(1, netStonesLeftOnThisLevel) + Game1.player.LuckLevel / 100.0 +
                          Game1.player.DailyLuck / 5.0;
             if (Game1.mine.EnemyCount == 0) chance += 0.04;
-            for (var x = 0; x < layerWidth; x++)
-            for (var y = 0; y < layerHeight; y++)
+            foreach(var pair in Game1.mine.Objects.Pairs.Where(pair => pair.Value.Name.Equals("Stone")))
             {
-                var obj = Game1.mine.getObjectAtTile(x, y);
-                if (obj == null || !obj.Name.Equals("Stone")) continue;
+                var obj = pair.Value;
                 // ladder chance calculation taken from checkStoneForItems function in MineShaft class
-                var r = new Random(x * 1000 + y + Game1.mine.mineLevel + (int) Game1.uniqueIDForThisGame / 2);
+                var r = new Random((int)pair.Key.X * 1000 + (int)pair.Key.Y + Game1.mine.mineLevel + (int) Game1.uniqueIDForThisGame / 2);
                 r.NextDouble();
                 var next = r.NextDouble();
                 if (netStonesLeftOnThisLevel == 0 || next < chance) _ladderStones.Add(new LadderStone(obj));
-
             }
         }
 
         private void FindNodes()
         {
-            var netStonesLeftOnThisLevel = Helper.Reflection
-                .GetField<NetIntDelta>(Game1.mine, "netStonesLeftOnThisLevel").GetValue().Value;
-            if (netStonesLeftOnThisLevel == _stones || netStonesLeftOnThisLevel == 0) return;
-            _stones = netStonesLeftOnThisLevel;
-            if (_stones > 0 && _nodeStones.Count == 0)
+            if (_nodesSetUp && _nodeStones.Count <= 0) return;
+            if (!_nodesSetUp)
             {
-                var layerWidth = Game1.mine.map.Layers[0].LayerWidth;
-                var layerHeight = Game1.mine.map.Layers[0].LayerHeight;
-                for (var x = 0; x < layerWidth; x++)
-                    for (var y = 0; y < layerHeight; y++)
-                    {
-                        var obj = Game1.mine.getObjectAtTile(x, y);
-                        if (obj == null || !obj.Name.Equals("Stone") || !_selectedNodeTypeIndices.Contains(obj.ParentSheetIndex)) continue;
-                        _nodeStones.Add(new NodeStone(obj, x, y));
-                    }
-            } else
-            {
-                _nodeStones.RemoveAll(node => node.obj == Game1.mine.getObjectAtTile(node.x, node.y));
-            }
+                _nodeStones.AddRange(Game1.currentLocation.objects.Pairs.Where(pair => pair.Value.Name.Equals("Stone") && _selectedNodeTypeIndices.Contains(pair.Value.ParentSheetIndex)).Select(pair => new NodeStone(pair.Value, pair.Key)));
+                _nodesSetUp = true;
+            }   
+            else
+                _nodeStones.RemoveAll(node => !Game1.currentLocation.objects.ContainsKey(node.Location));
         }
 
         private static void OnRenderedWorld(object sender, RenderedWorldEventArgs e)
@@ -225,8 +200,8 @@ namespace LadderLocator
         private static void OnWarped(object sender, WarpedEventArgs e)
         {
             _ladderStones.Clear();
-            _stones = 0;
             _nodeStones.Clear();
+            _nodesSetUp = false;
             _nextIsShaft = false;
         }
 
@@ -259,17 +234,16 @@ namespace LadderLocator
         }
 
         class NodeStone {
-            public NodeStone(Object obj, int x, int y)
+            public NodeStone(Object obj, Vector2 loc)
             {
                 SpriteIndex = obj.ParentSheetIndex;
-                this.x = x;
-                this.y = y;
+                this.obj = obj;
+                Location = loc;
             }
 
             public Object obj { get; }
             public int SpriteIndex { get; }
-            public int x { get; }
-            public int y { get; }
+            public Vector2 Location { get; }
         }
 
         /// <summary>
