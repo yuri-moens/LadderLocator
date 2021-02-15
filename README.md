@@ -25,7 +25,7 @@ For information on specifying keybinds for Key Combination List type settings, s
 | CycleAlpha | Key Combination List | LeftAlt + OemTilde | Key combination lsit that will cycle through `HighlightAlpha` values, 0.15 at a time (wrapping when over 1.0) |
 | HighlightUsesStoneTint | `true` or `false` | false | Instead of using the defined rectangle color or black (for images), use a color similar to the highlighted stone as a tint |
 | ToggleTint | Key Combination List | LeftControl + OemTilde | Key combination list that will toggle the value of `HighlightUSesStoneTint` |
-| NodeRadar | `true` or `false` | false | Show available ore/gem/geode nodes on the current level near the health bar |
+| NodeRadar | `true` or `false` | false | When true, will show available ore/gem/geode nodes on the current level near the health bar |
 | RadarScale | decimal | 1.0 | Size modifier for the ores displayed for the radar |
 | NodeTypes | List of node types | List of all types | Remove values to prevent that type of node showing on the radar. Delete the config item and restart to regenerate the list of all types |
 
