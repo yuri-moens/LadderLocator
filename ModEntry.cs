@@ -16,6 +16,9 @@ namespace LadderLocator
 {
     internal class ModEntry : Mod
     {
+        private static int _stones;
+        private static List<int> _selectedNodeTypeIndices;
+        private static List<NodeStone> _nodeStones;
         private static ModConfig _config;
         private static Texture2D _pixelTexture;
         private static Texture2D _imageTexture;
@@ -30,6 +33,10 @@ namespace LadderLocator
             _pixelTexture.SetData(colorArray);
             _imageTexture = helper.Content.Load<Texture2D>(_config.HighlightImageFilename, ContentSource.ModFolder);
             _ladderStones = new List<LadderStone>();
+            _stones = 0;
+            _selectedNodeTypeIndices = RadarNode.All.Where(radarNode => _config.NodeTypes.Contains(radarNode.type))
+                .OrderBy(radarNode => radarNode.value).Select(radarNode => radarNode.spriteIndex).ToList();
+            _nodeStones = new List<NodeStone>();
             Helper.Events.GameLoop.UpdateTicked += OnUpdateTicked;
             Helper.Events.Display.RenderedWorld += OnRenderedWorld;
             Helper.Events.Input.ButtonPressed += OnButtonPressed;
@@ -51,6 +58,7 @@ namespace LadderLocator
             var ladderHasSpawned = Helper.Reflection.GetField<bool>(Game1.mine, "ladderHasSpawned").GetValue();
             if (ladderHasSpawned) _ladderStones.Clear();
             else if (_ladderStones.Count == 0) FindLadders();
+            if (_config.NodeRadar) FindNodes();
             if (!_config.ForceShafts || Game1.mine.getMineArea() != StardewValley.Locations.MineShaft.desertArea || _nextIsShaft ||
                 _ladderStones.Count <= 0) return;
             var mineRandom = Helper.Reflection.GetField<Random>(Game1.mine, "mineRandom").GetValue();
@@ -86,14 +94,40 @@ namespace LadderLocator
                 r.NextDouble();
                 var next = r.NextDouble();
                 if (netStonesLeftOnThisLevel == 0 || next < chance) _ladderStones.Add(new LadderStone(obj));
-                }
+
+            }
+        }
+
+        private void FindNodes()
+        {
+            var netStonesLeftOnThisLevel = Helper.Reflection
+                .GetField<NetIntDelta>(Game1.mine, "netStonesLeftOnThisLevel").GetValue().Value;
+            if (netStonesLeftOnThisLevel == _stones || netStonesLeftOnThisLevel == 0) return;
+            _stones = netStonesLeftOnThisLevel;
+            if (_stones > 0 && _nodeStones.Count == 0)
+            {
+                var layerWidth = Game1.mine.map.Layers[0].LayerWidth;
+                var layerHeight = Game1.mine.map.Layers[0].LayerHeight;
+                for (var x = 0; x < layerWidth; x++)
+                    for (var y = 0; y < layerHeight; y++)
+                    {
+                        var obj = Game1.mine.getObjectAtTile(x, y);
+                        if (obj == null || !obj.Name.Equals("Stone") || !_selectedNodeTypeIndices.Contains(obj.ParentSheetIndex)) continue;
+                        _nodeStones.Add(new NodeStone(obj, x, y));
+                    }
+            } else
+            {
+                _nodeStones.RemoveAll(node => node.obj == Game1.mine.getObjectAtTile(node.x, node.y));
+            }
         }
 
         private static void OnRenderedWorld(object sender, RenderedWorldEventArgs e)
         {
-            if (!Context.IsWorldReady || _ladderStones.Count <= 0) return;
+            if (!Context.IsWorldReady) return;
+            if (_ladderStones.Count > 0)
+            {
                 foreach (var obj in _ladderStones)
-                { 
+                {
                     var rect = obj.BoundingBox;
                     rect.Offset(-Game1.viewport.X, -Game1.viewport.Y);
                     var rectColor = (_config.HighlightUsesStoneTint ? obj.Tint : _config.HighlightRectangleRGBA) * Convert.ToSingle(_config.HighlightAlpha);
@@ -102,6 +136,21 @@ namespace LadderLocator
                     if (_config.HighlightTypes.Contains(HighlightType.Image)) DrawImage(rect, imageColor, obj.SpriteIndex, obj.Flipped);
                     if (_config.HighlightTypes.Contains(HighlightType.Sprite)) DrawSprite(rect, imageColor, obj.SpriteIndex, obj.Flipped);
                 }
+            }
+            if (_nodeStones.Count > 0)
+            {
+                int i = 0;
+                int spriteSize = Convert.ToInt32(16 * _config.RadarScale);
+                int left = Game1.viewport.Width - 120;
+                int top = Game1.viewport.Height - 15;
+                foreach (var nodeType in _selectedNodeTypeIndices.Where(nodeType => _nodeStones.Select(node => node.SpriteIndex).Contains(nodeType)))
+                {
+                    int spriteOffset = (i+1) * spriteSize;
+                    Game1.spriteBatch.Draw(Game1.objectSpriteSheet, new Vector2(left - spriteSize, top - spriteOffset),
+                        new Rectangle((nodeType % 24) * 16, (int)(nodeType / 24) * 16, 16, 16), Color.White, 0.0f, Vector2.Zero, Convert.ToSingle(_config.RadarScale), SpriteEffects.None, 0.0f);
+                    ++i;
+                }
+            }
         }
 
         private static void DrawRectangle(Rectangle rect, Color color)
@@ -176,6 +225,8 @@ namespace LadderLocator
         private static void OnWarped(object sender, WarpedEventArgs e)
         {
             _ladderStones.Clear();
+            _stones = 0;
+            _nodeStones.Clear();
             _nextIsShaft = false;
         }
 
@@ -205,6 +256,20 @@ namespace LadderLocator
             public int SpriteIndex { get; }
             public bool Flipped { get; }
             public Color Tint { get; }
+        }
+
+        class NodeStone {
+            public NodeStone(Object obj, int x, int y)
+            {
+                SpriteIndex = obj.ParentSheetIndex;
+                this.x = x;
+                this.y = y;
+            }
+
+            public Object obj { get; }
+            public int SpriteIndex { get; }
+            public int x { get; }
+            public int y { get; }
         }
 
         /// <summary>
