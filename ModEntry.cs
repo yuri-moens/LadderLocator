@@ -99,7 +99,7 @@ namespace LadderLocator
                     var rectColor = (_config.HighlightUsesStoneTint ? obj.Tint : _config.HighlightRectangleRGBA) * Convert.ToSingle(_config.HighlightAlpha);
                     if (_config.HighlightTypes.Contains(HighlightType.Rectangle)) DrawRectangle(rect, rectColor);
                     var imageColor = (_config.HighlightUsesStoneTint ? obj.Tint : Color.Black) * Convert.ToSingle(_config.HighlightAlpha);
-                    if (_config.HighlightTypes.Contains(HighlightType.Image)) DrawImage(rect, imageColor, obj.SpriteIndex, obj.Flipped);
+                if (_config.HighlightTypes.Contains(HighlightType.Image)) DrawImage(rect, imageColor, obj.SpriteIndex, obj.Flipped);
                     if (_config.HighlightTypes.Contains(HighlightType.Sprite)) DrawSprite(rect, imageColor, obj.SpriteIndex, obj.Flipped);
                 }
         }
@@ -135,7 +135,7 @@ namespace LadderLocator
             if (_config.CycleAlpha.JustPressed())
             {
                 _config.HighlightAlpha = Math.Round((_config.HighlightAlpha + 0.15M) % 1.0M, 2);
-                Game1.addHUDMessage(new HUDMessage($"Highlight alpha now {_config.HighlightAlpha}", 2));
+                Game1.addHUDMessage(new HUDMessage($"Highlight alpha now {_config.HighlightAlpha}"));
             }
             else if (_config.ToggleTint.JustPressed())
             {
