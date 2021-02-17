@@ -37,7 +37,8 @@ namespace LadderLocator
             _nodeStones = new Dictionary<Vector2, Stone>();
 
             Helper.Events.World.ObjectListChanged += OnObjectListChanged;
-            Helper.Events.Display.RenderedWorld += OnRenderedWorld;
+            if (_config.HighlightTypes.Count > 0) Helper.Events.Display.RenderedWorld += OnRenderedWorld;
+            if (_config.NodeRadar) Helper.Events.Display.RenderingHud += OnRenderingHud;
             Helper.Events.Input.ButtonPressed += OnButtonPressed;
             Helper.Events.Player.Warped += OnWarped;
         }
@@ -64,7 +65,7 @@ namespace LadderLocator
             _nodeStones.Clear();
             _nextIsShaft = false;
 
-            if (_config.NodeRadar && LocationHasNodes(e.NewLocation)) FindNodes(e.NewLocation);
+            if (LocationHasNodes(e.NewLocation)) FindNodes(e.NewLocation);
             if (!(e.NewLocation is StardewValley.Locations.MineShaft mine && FindLadders(mine)))
             {
                 Helper.Events.GameLoop.OneSecondUpdateTicked += OnUpdateTicked;
@@ -125,7 +126,7 @@ namespace LadderLocator
                 _nodeStones.Add(pair.Key, new Stone(pair.Value));
         }
 
-        private static void OnRenderedWorld(object sender, RenderedWorldEventArgs e)
+        private void OnRenderedWorld(object sender, RenderedWorldEventArgs e)
         {
             if (!Context.IsWorldReady) return;
             if (_ladderStones.Count > 0)
@@ -141,18 +142,19 @@ namespace LadderLocator
                     if (_config.HighlightTypes.Contains(HighlightType.Sprite)) DrawSprite(rect, imageColor, obj.SpriteIndex, obj.Flipped);
                 }
             }
-            if (_nodeStones.Count > 0)
+        }
+
+        private void OnRenderingHud(object sender, RenderingHudEventArgs e)
+        {
+            
+            if (!Game1.eventUp && _nodeStones.Count > 0)
             {
                 int i = 0;
-                int spriteSize = Convert.ToInt32(16 * _config.RadarScale);
-                int left = Game1.viewport.Width - 120;
-                if (!Game1.showingHealth) left += 60;
-                int top = Game1.viewport.Height - 15;
                 foreach (var nodeType in _selectedNodeTypeIndices.Where(nodeType => _nodeStones.Values.Select(node => node.SpriteIndex).Contains(nodeType)))
                 {
-                    int spriteOffset = (i + 1) * spriteSize;
-                    Game1.spriteBatch.Draw(Game1.objectSpriteSheet, new Vector2(left - spriteSize, top - spriteOffset),
-                        new Rectangle((nodeType % 24) * 16, (int)(nodeType / 24) * 16, 16, 16), Color.White, 0.0f, Vector2.Zero, Convert.ToSingle(_config.RadarScale), SpriteEffects.None, 0.0f);
+                    Game1.spriteBatch.Draw(Game1.objectSpriteSheet,
+                        new Vector2(Game1.graphics.GraphicsDevice.Viewport.TitleSafeArea.Right - (Game1.showingHealth ? 120 : 64), Game1.graphics.GraphicsDevice.Viewport.TitleSafeArea.Bottom - 16 - Convert.ToInt32(16 * Convert.ToSingle(_config.RadarScale) * i)),
+                        new Rectangle((nodeType % 24) * 16, (int)(nodeType / 24) * 16, 16, 16), Color.White, 0.0f, new Vector2(16, 16), Convert.ToSingle(_config.RadarScale), SpriteEffects.None, 1.0f);   
                     ++i;
                 }
             }
@@ -186,10 +188,20 @@ namespace LadderLocator
 
         private void OnButtonPressed(object sender, ButtonPressedEventArgs e)
         {
-            if (_config.CycleAlpha.JustPressed())
+            if (_config.ToggleNodeRadar.JustPressed())
+            {
+                _config.NodeRadar = !_config.NodeRadar;
+                Game1.addHUDMessage(new HUDMessage($"Node Radar toggled {(_config.NodeRadar ? "on" : "off")}", 2));
+                Helper.WriteConfig(_config);
+
+                Helper.Events.Display.RenderingHud -= OnRenderingHud;
+                if (_config.NodeRadar) Helper.Events.Display.RenderingHud += OnRenderingHud;
+            }
+            else if (_config.CycleAlpha.JustPressed())
             {
                 _config.HighlightAlpha = Math.Round((_config.HighlightAlpha + 0.15M) % 1.0M, 2);
                 Game1.addHUDMessage(new HUDMessage($"Highlight alpha now {_config.HighlightAlpha}", 2));
+                Helper.WriteConfig(_config);
             }
             else if (_config.ToggleTint.JustPressed())
             {
@@ -210,6 +222,9 @@ namespace LadderLocator
                     ? new HUDMessage("Ladder highlight: " + string.Join(" + ", _config.HighlightTypes), 2)
                     : new HUDMessage("Ladder highlight disabled", 2));
                 Helper.WriteConfig(_config);
+
+                Helper.Events.Display.RenderedWorld -= OnRenderedWorld;
+                if (_config.HighlightTypes.Count > 0) Helper.Events.Display.RenderedWorld += OnRenderedWorld;
             }
             else if (_config.ToggleShaftsKey.JustPressed())
             {

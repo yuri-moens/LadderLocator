@@ -18,6 +18,7 @@ namespace LadderLocator
         public bool HighlightUsesStoneTint { get; set; } = false;
         public KeybindList ToggleTint { get; set; } = KeybindList.Parse("LeftControl + OemTilde");
         public bool NodeRadar { get; set; } = false;
+        public KeybindList ToggleNodeRadar { get; set; } = KeybindList.Parse("LeftControl + LeftShift + OemTilde");
         public decimal RadarScale { get; set; } = 1.0M;
         public HashSet<Node> NodeTypes { get; set; } = new HashSet<Node>((Node[])System.Enum.GetValues(typeof(Node)));
     }
