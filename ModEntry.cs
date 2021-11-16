@@ -92,7 +92,7 @@ namespace LadderLocator
                 var r = new Random((int)pair.Key.X * 1000 + (int)pair.Key.Y + mine.mineLevel + (int)Game1.uniqueIDForThisGame / 2);
                 r.NextDouble();
                 var next = r.NextDouble();
-                if (netStonesLeftOnThisLevel == 0 || next < chance) _ladderStones.Add(new LadderStone(obj));
+                if ((netStonesLeftOnThisLevel == 0 || next < chance) && obj.ParentSheetIndex / 24 < Game1.objectSpriteSheet.Height) _ladderStones.Add(new LadderStone(obj));
             }
             if (_config.ForceShafts && mine.getMineArea() == StardewValley.Locations.MineShaft.desertArea
                 && !_nextIsShaft && _ladderStones.Count > 0) ForceShaft(mine);
