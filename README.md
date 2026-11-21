@@ -23,6 +23,8 @@ For information on specifying keybinds for Key Combination List type settings, s
 | ToggleHighlightTypeKey | Key Combination List | LeftShift + OemTilde | Key combination list that will toggle between the highlight types (individually, combinations, or none) |
 | HighlightTypes | Type array | Rectangle | Array of types of ladder stone highlighting that are enabled; See table below for details on the options |
 | HighlightRectangleRGBA | 4 comma separated integers | 0, 255, 0, 255 | RGBA values in integers (0-255) to define highlight rectangle color |
+| UseFrostHighlightColor | `true` or `false` | true | When true, overrides `HighlightRectangleRGBA` on frozen mine levels (41-79) for better visibility |
+| FrostHighlightRectangleRGBA | 4 comma separated integers | 255, 69, 0, 255 | RGBA values in integers (0-255) to define highlight rectangle color on frozen mine levels (41-79) |
 | HighlightImageFilename | string filename | cracked.png | Image name relative to the `Mods/LadderLocator/` directory |
 | HighlightAlpha | decimal | 0.45 | Decimal from 0 to 1 to apply transparency to the all highlight types, 0 is fully transparent, 1 is fully opaque |
 | CycleAlpha | Key Combination List | LeftAlt + OemTilde | Key combination lsit that will cycle through `HighlightAlpha` values, 0.15 at a time (wrapping when over 1.0) |

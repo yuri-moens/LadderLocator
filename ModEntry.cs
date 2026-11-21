@@ -181,7 +181,7 @@ namespace LadderLocator
         private void OnRenderedWorld(object sender, RenderedWorldEventArgs e)
         {
             if (!Context.IsWorldReady) return;
-            if (Game1.currentLocation is not StardewValley.Locations.MineShaft) return;
+            if (Game1.currentLocation is not StardewValley.Locations.MineShaft mine) return;
 
             var ladderStones = _ladderStones.Value;
             if (ladderStones.Count == 0) return;
@@ -190,13 +190,16 @@ namespace LadderLocator
             var drawRectangle = _config.HighlightTypes.Contains(HighlightType.Rectangle);
             var drawImage = _config.HighlightTypes.Contains(HighlightType.Image);
             var drawSprite = _config.HighlightTypes.Contains(HighlightType.Sprite);
+            var baseRectColor = _config.UseFrostHighlightColor && mine.getMineArea() == StardewValley.Locations.MineShaft.frostArea
+                ? _config.FrostHighlightRectangleRGBA
+                : _config.HighlightRectangleRGBA;
 
             foreach (var obj in ladderStones)
             {
                 var rect = obj.BoundingBox;
                 rect.Offset(-Game1.viewport.X, -Game1.viewport.Y);
 
-                var rectColor = (_config.HighlightUsesStoneTint ? obj.Tint : _config.HighlightRectangleRGBA) * alpha;
+                var rectColor = (_config.HighlightUsesStoneTint ? obj.Tint : baseRectColor) * alpha;
                 if (drawRectangle) DrawRectangle(e.SpriteBatch, rect, rectColor);
 
                 var imageColor = (_config.HighlightUsesStoneTint ? obj.Tint : Color.Black) * alpha;
@@ -497,44 +500,26 @@ namespace LadderLocator
                 tooltip: () => Helper.Translation.Get("highlight-type-sprite-tooltip")
             );
 
-            api.AddNumberOption(
-                mod: ModManifest,
-                getValue: () => _config.HighlightRectangleRGBA.R,
-                setValue: value => _config.HighlightRectangleRGBA = new Color(value, _config.HighlightRectangleRGBA.G, _config.HighlightRectangleRGBA.B, _config.HighlightRectangleRGBA.A),
-                min: 0,
-                max: 255,
-                name: () => Helper.Translation.Get("highlight-color-r"),
-                tooltip: () => Helper.Translation.Get("highlight-color-r-tooltip")
+            AddColorOptions(
+                api,
+                getColor: () => _config.HighlightRectangleRGBA,
+                setColor: color => _config.HighlightRectangleRGBA = color,
+                keyPrefix: "highlight-color"
             );
 
-            api.AddNumberOption(
+            api.AddBoolOption(
                 mod: ModManifest,
-                getValue: () => _config.HighlightRectangleRGBA.G,
-                setValue: value => _config.HighlightRectangleRGBA = new Color(_config.HighlightRectangleRGBA.R, value, _config.HighlightRectangleRGBA.B, _config.HighlightRectangleRGBA.A),
-                min: 0,
-                max: 255,
-                name: () => Helper.Translation.Get("highlight-color-g"),
-                tooltip: () => Helper.Translation.Get("highlight-color-g-tooltip")
+                getValue: () => _config.UseFrostHighlightColor,
+                setValue: value => _config.UseFrostHighlightColor = value,
+                name: () => Helper.Translation.Get("use-frost-highlight-color"),
+                tooltip: () => Helper.Translation.Get("use-frost-highlight-color-tooltip")
             );
 
-            api.AddNumberOption(
-                mod: ModManifest,
-                getValue: () => _config.HighlightRectangleRGBA.B,
-                setValue: value => _config.HighlightRectangleRGBA = new Color(_config.HighlightRectangleRGBA.R, _config.HighlightRectangleRGBA.G, value, _config.HighlightRectangleRGBA.A),
-                min: 0,
-                max: 255,
-                name: () => Helper.Translation.Get("highlight-color-b"),
-                tooltip: () => Helper.Translation.Get("highlight-color-b-tooltip")
-            );
-
-            api.AddNumberOption(
-                mod: ModManifest,
-                getValue: () => _config.HighlightRectangleRGBA.A,
-                setValue: value => _config.HighlightRectangleRGBA = new Color(_config.HighlightRectangleRGBA.R, _config.HighlightRectangleRGBA.G, _config.HighlightRectangleRGBA.B, value),
-                min: 0,
-                max: 255,
-                name: () => Helper.Translation.Get("highlight-color-a"),
-                tooltip: () => Helper.Translation.Get("highlight-color-a-tooltip")
+            AddColorOptions(
+                api,
+                getColor: () => _config.FrostHighlightRectangleRGBA,
+                setColor: color => _config.FrostHighlightRectangleRGBA = color,
+                keyPrefix: "frost-highlight-color"
             );
 
             api.AddKeybindList(
@@ -606,6 +591,30 @@ namespace LadderLocator
                 name: () => Helper.Translation.Get("radar-scale"),
                 tooltip: () => Helper.Translation.Get("radar-scale-tooltip")
             );
+        }
+
+        private void AddColorOptions(IGenericModConfigMenuApi api, Func<Color> getColor, Action<Color> setColor, string keyPrefix)
+        {
+            (string suffix, Func<Color, int> getter, Func<Color, int, Color> setter)[] channels =
+            {
+                ("r", c => c.R, (c, v) => new Color(v, c.G, c.B, c.A)),
+                ("g", c => c.G, (c, v) => new Color(c.R, v, c.B, c.A)),
+                ("b", c => c.B, (c, v) => new Color(c.R, c.G, v, c.A)),
+                ("a", c => c.A, (c, v) => new Color(c.R, c.G, c.B, v))
+            };
+
+            foreach (var (suffix, getter, setter) in channels)
+            {
+                api.AddNumberOption(
+                    mod: ModManifest,
+                    getValue: () => getter(getColor()),
+                    setValue: value => setColor(setter(getColor(), value)),
+                    min: 0,
+                    max: 255,
+                    name: () => Helper.Translation.Get($"{keyPrefix}-{suffix}"),
+                    tooltip: () => Helper.Translation.Get($"{keyPrefix}-{suffix}-tooltip")
+                );
+            }
         }
 
         private void ApplyConfigChanges()
