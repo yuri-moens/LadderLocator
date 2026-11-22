@@ -6,6 +6,7 @@ using Microsoft.Xna.Framework.Graphics;
 using Netcode;
 using StardewModdingAPI;
 using StardewModdingAPI.Events;
+using StardewModdingAPI.Utilities;
 using StardewValley;
 using Object = StardewValley.Object;
 
@@ -13,188 +14,283 @@ namespace LadderLocator
 {
     internal class ModEntry : Mod
     {
-        private static List<int> _selectedNodeTypeIndices;
-        private static Dictionary<Vector2, Stone> _nodeStones;
-        private static ModConfig _config;
-        private static Texture2D _pixelTexture;
-        private static Texture2D _imageTexture;
-        private static List<LadderStone> _ladderStones;
-        private static bool _nextIsShaft;
+        private readonly PerScreen<List<LadderStone>> _ladderStones = new(() => new List<LadderStone>());
+        private readonly PerScreen<Dictionary<Vector2, Stone>> _nodeStones = new(() => new Dictionary<Vector2, Stone>());
+        private readonly PerScreen<bool> _nextIsShaft = new();
+        private readonly PerScreen<bool> _needsMineScan = new();
+        private readonly Dictionary<int, Color> _stoneAverageColors = new();
+
+        private List<int> _selectedNodeTypeIndices;
+        private ModConfig _config;
+        private Texture2D _pixelTexture;
+        private Texture2D _imageTexture;
+        private string _loadedImageFilename;
 
         public override void Entry(IModHelper helper)
         {
             _config = Helper.ReadConfig<ModConfig>();
             _pixelTexture = new Texture2D(Game1.graphics.GraphicsDevice, 1, 1, false, SurfaceFormat.Color);
-            var colorArray = Enumerable.Range(0, 1).Select(i => Color.White).ToArray();
-            _pixelTexture.SetData(colorArray);
-            _imageTexture = helper.ModContent.Load<Texture2D>(_config.HighlightImageFilename);
-            _ladderStones = new List<LadderStone>();
-            _selectedNodeTypeIndices = RadarNode.All.Where(radarNode => _config.NodeTypes.Contains(radarNode.type))
-                .OrderBy(radarNode => radarNode.value).Select(radarNode => radarNode.spriteIndex).ToList();
-            _nodeStones = new Dictionary<Vector2, Stone>();
+            _pixelTexture.SetData(new[] { Color.White });
+
+            ApplyConfigChanges();
 
             Helper.Events.World.ObjectListChanged += OnObjectListChanged;
-            if (_config.HighlightTypes.Count > 0) Helper.Events.Display.RenderedWorld += OnRenderedWorld;
-            if (_config.NodeRadar) Helper.Events.Display.RenderingHud += OnRenderingHud;
             Helper.Events.Input.ButtonPressed += OnButtonPressed;
             Helper.Events.Player.Warped += OnWarped;
-
+            Helper.Events.GameLoop.OneSecondUpdateTicked += OnUpdateTicked;
+            Helper.Events.GameLoop.ReturnedToTitle += OnReturnedToTitle;
             Helper.Events.GameLoop.GameLaunched += OnGameLaunched;
+        }
 
+        private void OnReturnedToTitle(object sender, ReturnedToTitleEventArgs e)
+        {
+            _ladderStones.ResetAllScreens();
+            _nodeStones.ResetAllScreens();
+            _nextIsShaft.ResetAllScreens();
+            _needsMineScan.ResetAllScreens();
         }
 
         private void OnObjectListChanged(object sender, ObjectListChangedEventArgs e)
         {
             if (!e.IsCurrentLocation) return;
+
             if (e.Location is StardewValley.Locations.MineShaft mine)
             {
                 var ladderHasSpawned = Helper.Reflection.GetField<bool>(mine, "ladderHasSpawned").GetValue();
-                if (ladderHasSpawned) _ladderStones.Clear();
-                else if (_ladderStones.Count <= 0) FindLadders(mine);
+                if (ladderHasSpawned)
+                {
+                    _ladderStones.Value.Clear();
+                    _needsMineScan.Value = false;
+                }
+                else
+                {
+                    // Re-scan even if stones were already highlighted, since removing stones raises
+                    // ladder chance for remaining stones and clears any broken stone from the list.
+                    _needsMineScan.Value = !FindLadders(mine);
+                }
             }
+
             if (LocationHasNodes(e.Location))
+            {
+                var nodeStones = _nodeStones.Value;
                 foreach (var pair in e.Removed)
-                    _nodeStones.Remove(pair.Key);
+                    nodeStones.Remove(pair.Key);
+
+                foreach (var pair in e.Added)
+                {
+                    if (pair.Value.Name.Equals("Stone") && _selectedNodeTypeIndices.Contains(pair.Value.ParentSheetIndex))
+                        nodeStones[pair.Key] = new Stone(pair.Value);
+                }
+            }
         }
 
         private void OnWarped(object sender, WarpedEventArgs e)
         {
             if (!e.IsLocalPlayer) return;
 
-            _ladderStones.Clear();
-            _nodeStones.Clear();
-            _nextIsShaft = false;
+            _ladderStones.Value.Clear();
+            _nodeStones.Value.Clear();
+            _nextIsShaft.Value = false;
+            _needsMineScan.Value = false;
 
-            if (LocationHasNodes(e.NewLocation)) FindNodes(e.NewLocation);
-            if (!(e.NewLocation is StardewValley.Locations.MineShaft mine && FindLadders(mine)))
-            {
-                Helper.Events.GameLoop.OneSecondUpdateTicked += OnUpdateTicked;
-            }
+            if (LocationHasNodes(e.NewLocation))
+                FindNodes(e.NewLocation);
+
+            if (e.NewLocation is StardewValley.Locations.MineShaft mine && !FindLadders(mine))
+                _needsMineScan.Value = true;
         }
 
         private void OnUpdateTicked(object sender, OneSecondUpdateTickedEventArgs e)
         {
-            if (Game1.mine == null) return;
-            if (_ladderStones.Count > 0 || FindLadders(Game1.mine))
-                Helper.Events.GameLoop.OneSecondUpdateTicked -= OnUpdateTicked;
+            if (!Context.IsWorldReady || !_needsMineScan.Value) return;
+
+            if (Game1.currentLocation is not StardewValley.Locations.MineShaft mine)
+            {
+                _needsMineScan.Value = false;
+                return;
+            }
+
+            if (_ladderStones.Value.Count > 0 || FindLadders(mine))
+                _needsMineScan.Value = false;
         }
 
         private bool FindLadders(StardewValley.Locations.MineShaft mine)
         {
+            var ladderStones = _ladderStones.Value;
+            ladderStones.Clear();
+
             var ladderHasSpawned = Helper.Reflection.GetField<bool>(mine, "ladderHasSpawned").GetValue();
             if (ladderHasSpawned || mine.mustKillAllMonstersToAdvance() || !mine.shouldCreateLadderOnThisLevel()) return true;
+
             var netStonesLeftOnThisLevel = Helper.Reflection
                 .GetField<NetIntDelta>(mine, "netStonesLeftOnThisLevel").GetValue().Value;
             var chance = 0.02 + 1.0 / Math.Max(1, netStonesLeftOnThisLevel) + Game1.player.LuckLevel / 100.0 +
                          Game1.player.DailyLuck / 5.0;
             if (mine.EnemyCount == 0) chance += 0.04;
+
             foreach (var pair in mine.Objects.Pairs.Where(pair => pair.Value.Name.Equals("Stone")))
             {
                 var obj = pair.Value;
                 var r = Utility.CreateDaySaveRandom(pair.Key.X * 1000, pair.Key.Y, mine.mineLevel);
                 r.NextDouble();
                 var next = r.NextDouble();
-                if ((netStonesLeftOnThisLevel == 0 || next < chance) && obj.ParentSheetIndex / 24 < Game1.objectSpriteSheet.Height) _ladderStones.Add(new LadderStone(obj));
+                if (netStonesLeftOnThisLevel == 0 || next < chance)
+                    ladderStones.Add(new LadderStone(obj, GetObjectSpriteAverageColor(obj.ParentSheetIndex)));
             }
+
             if (_config.ForceShafts && mine.getMineArea() == StardewValley.Locations.MineShaft.desertArea
-                && !_nextIsShaft && _ladderStones.Count > 0) ForceShaft(mine);
-            return _ladderStones.Count > 0;
+                && !_nextIsShaft.Value && ladderStones.Count > 0)
+            {
+                ForceShaft(mine);
+            }
+
+            return ladderStones.Count > 0;
         }
 
         private void ForceShaft(StardewValley.Locations.MineShaft mine)
         {
+            if (!Context.IsMainPlayer) return;
+
             var mineRandom = Helper.Reflection.GetField<Random>(mine, "mineRandom").GetValue();
+            if (mineRandom == null || ReferenceEquals(mineRandom, Random.Shared)) return;
+
             var r = Cloner.Clone(mineRandom);
             var next = r.NextDouble();
-            while (next >= 0.2)
+            int guard = 0;
+            while (next >= 0.2 && guard++ < 1000)
             {
                 next = r.NextDouble();
                 mineRandom.NextDouble();
             }
-            _nextIsShaft = true;
+            _nextIsShaft.Value = true;
         }
 
-        private bool LocationHasNodes(GameLocation loc)
+        private static bool LocationHasNodes(GameLocation loc)
         {
             return loc is StardewValley.Locations.MineShaft || loc is StardewValley.Locations.VolcanoDungeon || loc is StardewValley.Locations.Mountain;
         }
 
         private void FindNodes(GameLocation loc)
         {
+            var nodeStones = _nodeStones.Value;
+            nodeStones.Clear();
             foreach (var pair in loc.objects.Pairs.Where(pair => pair.Value.Name.Equals("Stone") && _selectedNodeTypeIndices.Contains(pair.Value.ParentSheetIndex)))
-                _nodeStones.Add(pair.Key, new Stone(pair.Value));
+                nodeStones[pair.Key] = new Stone(pair.Value);
         }
 
         private void OnRenderedWorld(object sender, RenderedWorldEventArgs e)
         {
             if (!Context.IsWorldReady) return;
-            if (_ladderStones.Count > 0)
+            if (Game1.currentLocation is not StardewValley.Locations.MineShaft mine) return;
+
+            var ladderStones = _ladderStones.Value;
+            if (ladderStones.Count == 0) return;
+
+            var alpha = Convert.ToSingle(_config.HighlightAlpha);
+            var drawRectangle = _config.HighlightTypes.Contains(HighlightType.Rectangle);
+            var drawImage = _config.HighlightTypes.Contains(HighlightType.Image);
+            var drawSprite = _config.HighlightTypes.Contains(HighlightType.Sprite);
+            var baseRectColor = _config.UseFrostHighlightColor && mine.getMineArea() == StardewValley.Locations.MineShaft.frostArea
+                ? _config.FrostHighlightRectangleRGBA
+                : _config.HighlightRectangleRGBA;
+
+            foreach (var obj in ladderStones)
             {
-                foreach (var obj in _ladderStones)
-                {
-                    var rect = obj.BoundingBox;
-                    rect.Offset(-Game1.viewport.X, -Game1.viewport.Y);
-                    var rectColor = (_config.HighlightUsesStoneTint ? obj.Tint : _config.HighlightRectangleRGBA) * Convert.ToSingle(_config.HighlightAlpha);
-                    if (_config.HighlightTypes.Contains(HighlightType.Rectangle)) DrawRectangle(rect, rectColor);
-                    var imageColor = (_config.HighlightUsesStoneTint ? obj.Tint : Color.Black) * Convert.ToSingle(_config.HighlightAlpha);
-                    if (_config.HighlightTypes.Contains(HighlightType.Image)) DrawImage(rect, imageColor, obj.SpriteIndex, obj.Flipped);
-                    if (_config.HighlightTypes.Contains(HighlightType.Sprite)) DrawSprite(rect, imageColor, obj.SpriteIndex, obj.Flipped);
-                }
+                var rect = obj.BoundingBox;
+                rect.Offset(-Game1.viewport.X, -Game1.viewport.Y);
+
+                var rectColor = (_config.HighlightUsesStoneTint ? obj.Tint : baseRectColor) * alpha;
+                if (drawRectangle) DrawRectangle(e.SpriteBatch, rect, rectColor);
+
+                var imageColor = (_config.HighlightUsesStoneTint ? obj.Tint : Color.Black) * alpha;
+                if (drawImage) DrawImage(e.SpriteBatch, rect, imageColor, obj.Flipped);
+                if (drawSprite) DrawSprite(e.SpriteBatch, rect, imageColor, obj.SpriteIndex, obj.Flipped);
             }
         }
 
         private void OnRenderingHud(object sender, RenderingHudEventArgs e)
         {
-            
-            if (!Game1.eventUp && _nodeStones.Count > 0)
+            if (!Context.IsWorldReady || Game1.eventUp) return;
+            if (!LocationHasNodes(Game1.currentLocation)) return;
+
+            var nodeStones = _nodeStones.Value;
+            if (nodeStones.Count == 0) return;
+
+            var presentIndices = new HashSet<int>(nodeStones.Values.Select(node => node.SpriteIndex));
+            var safeArea = Game1.graphics.GraphicsDevice.Viewport.TitleSafeArea;
+            var radarScale = Convert.ToSingle(_config.RadarScale);
+            int i = 0;
+
+            foreach (var nodeType in _selectedNodeTypeIndices.Where(presentIndices.Contains))
             {
-                int i = 0;
-                foreach (var nodeType in _selectedNodeTypeIndices.Where(nodeType => _nodeStones.Values.Select(node => node.SpriteIndex).Contains(nodeType)))
-                {
-                    Game1.spriteBatch.Draw(Game1.objectSpriteSheet,
-                        new Vector2(Game1.graphics.GraphicsDevice.Viewport.TitleSafeArea.Right - (Game1.showingHealth ? 120 : 64), Game1.graphics.GraphicsDevice.Viewport.TitleSafeArea.Bottom - 16 - Convert.ToInt32(16 * Convert.ToSingle(_config.RadarScale) * i)),
-                        new Rectangle((nodeType % 24) * 16, (int)(nodeType / 24) * 16, 16, 16), Color.White, 0.0f, new Vector2(16, 16), Convert.ToSingle(_config.RadarScale), SpriteEffects.None, 1.0f);   
-                    ++i;
-                }
+                if (!IsValidObjectSpriteIndex(nodeType)) continue;
+
+                e.SpriteBatch.Draw(
+                    Game1.objectSpriteSheet,
+                    new Vector2(
+                        safeArea.Right - (Game1.showingHealth ? 120 : 64),
+                        safeArea.Bottom - 16 - Convert.ToInt32(16 * radarScale * i)
+                    ),
+                    new Rectangle((nodeType % 24) * 16, (nodeType / 24) * 16, 16, 16),
+                    Color.White,
+                    0.0f,
+                    new Vector2(16, 16),
+                    radarScale,
+                    SpriteEffects.None,
+                    1.0f
+                );
+                ++i;
             }
         }
 
-        private static void DrawRectangle(Rectangle rect, Color color)
+        private void DrawRectangle(SpriteBatch spriteBatch, Rectangle rect, Color color)
         {
-            Game1.InUIMode(() =>
-            {
-                Game1.spriteBatch.Draw(_pixelTexture, new Rectangle(rect.Left + 3, rect.Top, rect.Width - 6, 3), color);
-                Game1.spriteBatch.Draw(_pixelTexture, new Rectangle(rect.Left + 3, rect.Bottom - 3, rect.Width - 6, 3), color);
-                Game1.spriteBatch.Draw(_pixelTexture, new Rectangle(rect.Left, rect.Top + 3, 3, rect.Height - 6), color);
-                Game1.spriteBatch.Draw(_pixelTexture, new Rectangle(rect.Right - 3, rect.Top + 3, 3, rect.Height - 6), color);
-            });
-        }
-        private static void DrawSprite(Rectangle rect, Color color, int spriteIndex, bool flipped)
-        {
-            Game1.InUIMode(() =>
-            {
-                Game1.spriteBatch.Draw(Game1.objectSpriteSheet, rect, new Rectangle((spriteIndex % 24) * 16, (int)(spriteIndex / 24) * 16, 16, 16), color, 0.0f, Vector2.Zero, flipped ? SpriteEffects.FlipHorizontally : SpriteEffects.None, 0.0f);
-            });
+            spriteBatch.Draw(_pixelTexture, new Rectangle(rect.Left + 3, rect.Top, rect.Width - 6, 3), color);
+            spriteBatch.Draw(_pixelTexture, new Rectangle(rect.Left + 3, rect.Bottom - 3, rect.Width - 6, 3), color);
+            spriteBatch.Draw(_pixelTexture, new Rectangle(rect.Left, rect.Top + 3, 3, rect.Height - 6), color);
+            spriteBatch.Draw(_pixelTexture, new Rectangle(rect.Right - 3, rect.Top + 3, 3, rect.Height - 6), color);
         }
 
-        private static void DrawImage(Rectangle rect, Color color, int spriteIndex, bool flipped)
+        private static void DrawSprite(SpriteBatch spriteBatch, Rectangle rect, Color color, int spriteIndex, bool flipped)
         {
-            Game1.InUIMode(() =>
-            {
-                Game1.spriteBatch.Draw(_imageTexture, rect, null, color, 0.0f, Vector2.Zero, flipped ? SpriteEffects.FlipHorizontally : SpriteEffects.None, 0.0f);
-            });
+            if (!IsValidObjectSpriteIndex(spriteIndex)) return;
+            spriteBatch.Draw(
+                Game1.objectSpriteSheet,
+                rect,
+                new Rectangle((spriteIndex % 24) * 16, (spriteIndex / 24) * 16, 16, 16),
+                color,
+                0.0f,
+                Vector2.Zero,
+                flipped ? SpriteEffects.FlipHorizontally : SpriteEffects.None,
+                0.0f
+            );
+        }
+
+        private void DrawImage(SpriteBatch spriteBatch, Rectangle rect, Color color, bool flipped)
+        {
+            if (_imageTexture == null) return;
+            spriteBatch.Draw(
+                _imageTexture,
+                rect,
+                null,
+                color,
+                0.0f,
+                Vector2.Zero,
+                flipped ? SpriteEffects.FlipHorizontally : SpriteEffects.None,
+                0.0f
+            );
         }
 
         private void OnButtonPressed(object sender, ButtonPressedEventArgs e)
         {
+            if (!Context.IsWorldReady || Game1.keyboardDispatcher.Subscriber != null) return;
+
             if (_config.ToggleNodeRadar.JustPressed())
             {
                 _config.NodeRadar = !_config.NodeRadar;
                 Game1.addHUDMessage(new HUDMessage($"Node Radar toggled {(_config.NodeRadar ? "on" : "off")}", 2));
                 Helper.WriteConfig(_config);
-
-                Helper.Events.Display.RenderingHud -= OnRenderingHud;
-                if (_config.NodeRadar) Helper.Events.Display.RenderingHud += OnRenderingHud;
+                UpdateDisplaySubscriptions();
             }
             else if (_config.CycleAlpha.JustPressed())
             {
@@ -221,9 +317,7 @@ namespace LadderLocator
                     ? new HUDMessage("Ladder highlight: " + string.Join(" + ", _config.HighlightTypes), 2)
                     : new HUDMessage("Ladder highlight disabled", 2));
                 Helper.WriteConfig(_config);
-
-                Helper.Events.Display.RenderedWorld -= OnRenderedWorld;
-                if (_config.HighlightTypes.Count > 0) Helper.Events.Display.RenderedWorld += OnRenderedWorld;
+                UpdateDisplaySubscriptions();
             }
             else if (_config.ToggleShaftsKey.JustPressed())
             {
@@ -235,7 +329,13 @@ namespace LadderLocator
             }
         }
 
-        private static void ToggleHighlightType(HighlightType type)
+        private void SetHighlightType(HighlightType type, bool enabled)
+        {
+            if (enabled) _config.HighlightTypes.Add(type);
+            else _config.HighlightTypes.Remove(type);
+        }
+
+        private void ToggleHighlightType(HighlightType type)
         {
             if (_config.HighlightTypes.Contains(type)) _config.HighlightTypes.Remove(type);
             else _config.HighlightTypes.Add(type);
@@ -255,11 +355,11 @@ namespace LadderLocator
 
         class LadderStone : Stone
         {
-            public LadderStone(Object obj) : base(obj)
+            public LadderStone(Object obj, Color tint) : base(obj)
             {
                 BoundingBox = obj.GetBoundingBox();
                 Flipped = obj.Flipped;
-                Tint = GetObjectSpriteAverageColor(SpriteIndex);
+                Tint = tint;
             }
 
             public Rectangle BoundingBox { get; }
@@ -267,16 +367,41 @@ namespace LadderLocator
             public Color Tint { get; }
         }
 
+        private static bool IsValidObjectSpriteIndex(int spriteIndex)
+        {
+            return spriteIndex >= 0
+                && Game1.objectSpriteSheet != null
+                && (spriteIndex % 24) * 16 + 16 <= Game1.objectSpriteSheet.Width
+                && (spriteIndex / 24) * 16 + 16 <= Game1.objectSpriteSheet.Height;
+        }
+
         /// <summary>
         /// Gets the average color of a particular stone from the center 8x8 square of its pixels.
         /// </summary>
         /// <param name="spriteIndex">Index of sprite to get color of from SDV object sprite sheet</param>
         /// <returns>average color of given sprite</returns>
-        private static Color GetObjectSpriteAverageColor(int spriteIndex)
+        private Color GetObjectSpriteAverageColor(int spriteIndex)
         {
+            if (!IsValidObjectSpriteIndex(spriteIndex))
+                return Color.Gray;
+
+            if (_stoneAverageColors.TryGetValue(spriteIndex, out var cached))
+                return cached;
+
             Color[] colors = new Color[8 * 8];
-            Game1.objectSpriteSheet.GetData(0, new Rectangle((spriteIndex % 24) * 16 + 4, (int)(spriteIndex / 24) * 16 + 4, 8, 8), colors, 0, 8 * 8);
-            var average = new Color(Convert.ToByte(colors.Sum(c => c.R) / colors.Count()), Convert.ToByte(colors.Sum(c => c.G) / colors.Count()), Convert.ToByte(colors.Sum(c => c.B) / colors.Count()));
+            Game1.objectSpriteSheet.GetData(
+                0,
+                new Rectangle((spriteIndex % 24) * 16 + 4, (spriteIndex / 24) * 16 + 4, 8, 8),
+                colors,
+                0,
+                colors.Length
+            );
+            var average = new Color(
+                Convert.ToByte(colors.Sum(c => c.R) / colors.Length),
+                Convert.ToByte(colors.Sum(c => c.G) / colors.Length),
+                Convert.ToByte(colors.Sum(c => c.B) / colors.Length)
+            );
+            _stoneAverageColors[spriteIndex] = average;
             return average;
         }
 
@@ -313,13 +438,13 @@ namespace LadderLocator
         private void ResetConfig()
         {
             _config = new ModConfig();
-            UpdateHudDisplay();
+            ApplyConfigChanges();
         }
 
         private void SaveConfig()
         {
             Helper.WriteConfig(_config);
-            UpdateHudDisplay();
+            ApplyConfigChanges();
         }
 
         /// <summary>
@@ -327,7 +452,6 @@ namespace LadderLocator
         /// </summary>
         private void AddOptions(IGenericModConfigMenuApi api)
         {
-
             api.AddKeybindList(
                 mod: ModManifest,
                 getValue: () => _config.ToggleShaftsKey,
@@ -352,63 +476,56 @@ namespace LadderLocator
                 tooltip: () => Helper.Translation.Get("toggle-highlight-type-key-tooltip")
             );
 
-            api.AddTextOption(
+            api.AddBoolOption(
                 mod: ModManifest,
-                getValue: () => string.Join(", ", _config.HighlightTypes),
-                setValue: value => _config.HighlightTypes = new HashSet<HighlightType>(value.Split(',').Select(Enum.Parse<HighlightType>)),
-                name: () => Helper.Translation.Get("highlight-types"),
-                tooltip: () => Helper.Translation.Get("highlight-types-tooltip"),
-                allowedValues: Enum.GetNames(typeof(HighlightType))
+                getValue: () => _config.HighlightTypes.Contains(HighlightType.Rectangle),
+                setValue: value => SetHighlightType(HighlightType.Rectangle, value),
+                name: () => Helper.Translation.Get("highlight-type-rectangle"),
+                tooltip: () => Helper.Translation.Get("highlight-type-rectangle-tooltip")
             );
 
-            api.AddNumberOption(
+            api.AddBoolOption(
                 mod: ModManifest,
-                getValue: () => _config.HighlightRectangleRGBA.R,
-                setValue: value => _config.HighlightRectangleRGBA = new Color(value, _config.HighlightRectangleRGBA.G, _config.HighlightRectangleRGBA.B, _config.HighlightRectangleRGBA.A),
-                min: 0,
-                max: 255,
-                name: () => Helper.Translation.Get("highlight-color-r"),
-                tooltip: () => Helper.Translation.Get("highlight-color-r-tooltip")
+                getValue: () => _config.HighlightTypes.Contains(HighlightType.Image),
+                setValue: value => SetHighlightType(HighlightType.Image, value),
+                name: () => Helper.Translation.Get("highlight-type-image"),
+                tooltip: () => Helper.Translation.Get("highlight-type-image-tooltip")
             );
 
-            api.AddNumberOption(
+            api.AddBoolOption(
                 mod: ModManifest,
-                getValue: () => _config.HighlightRectangleRGBA.G,
-                setValue: value => _config.HighlightRectangleRGBA = new Color(_config.HighlightRectangleRGBA.R, value, _config.HighlightRectangleRGBA.B, _config.HighlightRectangleRGBA.A),
-                min: 0,
-                max: 255,
-                name: () => Helper.Translation.Get("highlight-color-g"),
-                tooltip: () => Helper.Translation.Get("highlight-color-g-tooltip")
+                getValue: () => _config.HighlightTypes.Contains(HighlightType.Sprite),
+                setValue: value => SetHighlightType(HighlightType.Sprite, value),
+                name: () => Helper.Translation.Get("highlight-type-sprite"),
+                tooltip: () => Helper.Translation.Get("highlight-type-sprite-tooltip")
             );
 
-            api.AddNumberOption(
-                mod: ModManifest,
-                getValue: () => _config.HighlightRectangleRGBA.B,
-                setValue: value => _config.HighlightRectangleRGBA = new Color(_config.HighlightRectangleRGBA.R, _config.HighlightRectangleRGBA.G, value, _config.HighlightRectangleRGBA.A),
-                min: 0,
-                max: 255,
-                name: () => Helper.Translation.Get("highlight-color-b"),
-                tooltip: () => Helper.Translation.Get("highlight-color-b-tooltip")
+            AddColorOptions(
+                api,
+                getColor: () => _config.HighlightRectangleRGBA,
+                setColor: color => _config.HighlightRectangleRGBA = color,
+                keyPrefix: "highlight-color"
             );
 
-            api.AddNumberOption(
+            api.AddBoolOption(
                 mod: ModManifest,
-                getValue: () => _config.HighlightRectangleRGBA.A,
-                setValue: value => _config.HighlightRectangleRGBA = new Color(_config.HighlightRectangleRGBA.R, _config.HighlightRectangleRGBA.G, _config.HighlightRectangleRGBA.B, value),
-                min: 0,
-                max: 255,
-                name: () => Helper.Translation.Get("highlight-color-a"),
-                tooltip: () => Helper.Translation.Get("highlight-color-a-tooltip")
+                getValue: () => _config.UseFrostHighlightColor,
+                setValue: value => _config.UseFrostHighlightColor = value,
+                name: () => Helper.Translation.Get("use-frost-highlight-color"),
+                tooltip: () => Helper.Translation.Get("use-frost-highlight-color-tooltip")
+            );
+
+            AddColorOptions(
+                api,
+                getColor: () => _config.FrostHighlightRectangleRGBA,
+                setColor: color => _config.FrostHighlightRectangleRGBA = color,
+                keyPrefix: "frost-highlight-color"
             );
 
             api.AddKeybindList(
                 mod: ModManifest,
                 getValue: () => _config.ToggleTint,
-                setValue: value => {
-                    _config.ToggleTint = value;
-                    _config.HighlightUsesStoneTint = !_config.HighlightUsesStoneTint;
-                    Helper.WriteConfig(_config);
-                },
+                setValue: value => _config.ToggleTint = value,
                 name: () => Helper.Translation.Get("toggle-tint-key"),
                 tooltip: () => Helper.Translation.Get("toggle-tint-key-tooltip")
             );
@@ -424,7 +541,7 @@ namespace LadderLocator
             api.AddNumberOption(
                 mod: ModManifest,
                 getValue: () => (float)_config.HighlightAlpha,
-                setValue: value => _config.HighlightAlpha = (decimal)value,
+                setValue: value => _config.HighlightAlpha = Math.Round((decimal)value, 2),
                 min: 0.0f,
                 max: 1.0f,
                 interval: 0.05f,
@@ -467,7 +584,7 @@ namespace LadderLocator
             api.AddNumberOption(
                 mod: ModManifest,
                 getValue: () => (float)_config.RadarScale,
-                setValue: value => _config.RadarScale = (decimal)value,
+                setValue: value => _config.RadarScale = Math.Round((decimal)value, 2),
                 min: 0.1f,
                 max: 5.0f,
                 interval: 0.1f,
@@ -475,13 +592,80 @@ namespace LadderLocator
                 tooltip: () => Helper.Translation.Get("radar-scale-tooltip")
             );
         }
-        private void UpdateHudDisplay()
+
+        private void AddColorOptions(IGenericModConfigMenuApi api, Func<Color> getColor, Action<Color> setColor, string keyPrefix)
         {
+            (string suffix, Func<Color, int> getter, Func<Color, int, Color> setter)[] channels =
+            {
+                ("r", c => c.R, (c, v) => new Color(v, c.G, c.B, c.A)),
+                ("g", c => c.G, (c, v) => new Color(c.R, v, c.B, c.A)),
+                ("b", c => c.B, (c, v) => new Color(c.R, c.G, v, c.A)),
+                ("a", c => c.A, (c, v) => new Color(c.R, c.G, c.B, v))
+            };
+
+            foreach (var (suffix, getter, setter) in channels)
+            {
+                api.AddNumberOption(
+                    mod: ModManifest,
+                    getValue: () => getter(getColor()),
+                    setValue: value => setColor(setter(getColor(), value)),
+                    min: 0,
+                    max: 255,
+                    name: () => Helper.Translation.Get($"{keyPrefix}-{suffix}"),
+                    tooltip: () => Helper.Translation.Get($"{keyPrefix}-{suffix}-tooltip")
+                );
+            }
+        }
+
+        private void ApplyConfigChanges()
+        {
+            _config.HighlightTypes ??= new HashSet<HighlightType> { HighlightType.Rectangle };
+            _config.NodeTypes ??= new HashSet<Node>((Node[])Enum.GetValues(typeof(Node)));
+
+            _selectedNodeTypeIndices = RadarNode.All
+                .Where(radarNode => _config.NodeTypes.Contains(radarNode.type))
+                .OrderBy(radarNode => radarNode.value)
+                .Select(radarNode => radarNode.spriteIndex)
+                .ToList();
+
+            if (!string.IsNullOrWhiteSpace(_config.HighlightImageFilename) && _loadedImageFilename != _config.HighlightImageFilename)
+            {
+                try
+                {
+                    _imageTexture = Helper.ModContent.Load<Texture2D>(_config.HighlightImageFilename);
+                    _loadedImageFilename = _config.HighlightImageFilename;
+                }
+                catch (Exception ex)
+                {
+                    Monitor.Log($"Failed to load highlight image '{_config.HighlightImageFilename}': {ex.Message}", LogLevel.Warn);
+                }
+            }
+            else if (string.IsNullOrWhiteSpace(_config.HighlightImageFilename))
+            {
+                _imageTexture = null;
+                _loadedImageFilename = null;
+            }
+
+            UpdateDisplaySubscriptions();
+
+            if (Context.IsWorldReady)
+            {
+                if (LocationHasNodes(Game1.currentLocation))
+                    FindNodes(Game1.currentLocation);
+                if (Game1.currentLocation is StardewValley.Locations.MineShaft mine)
+                    _needsMineScan.Value = !FindLadders(mine);
+            }
+        }
+
+        private void UpdateDisplaySubscriptions()
+        {
+            Helper.Events.Display.RenderedWorld -= OnRenderedWorld;
+            if (_config.HighlightTypes.Count > 0)
+                Helper.Events.Display.RenderedWorld += OnRenderedWorld;
+
             Helper.Events.Display.RenderingHud -= OnRenderingHud;
             if (_config.NodeRadar)
-            {
                 Helper.Events.Display.RenderingHud += OnRenderingHud;
-            }
         }
     }
 }

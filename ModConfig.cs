@@ -11,6 +11,8 @@ namespace LadderLocator
         public KeybindList ToggleHighlightTypeKey { get; set; } = KeybindList.Parse("LeftShift + OemTilde");
         public HashSet<HighlightType> HighlightTypes { get; set; } = new HashSet<HighlightType>() { HighlightType.Rectangle };
         public Color HighlightRectangleRGBA { get; set; } = Color.Lime;
+        public bool UseFrostHighlightColor { get; set; } = true;
+        public Color FrostHighlightRectangleRGBA { get; set; } = Color.OrangeRed;
         public string HighlightImageFilename { get; set; } = "cracked.png";
         public decimal HighlightAlpha { get; set; } = 0.45M;
         public KeybindList CycleAlpha { get; set; } = KeybindList.Parse("LeftAlt + OemTilde");

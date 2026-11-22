@@ -1,0 +1,36 @@
+name: Build releases
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    env:
+      RELEASE_REF: refs/heads/master
+    steps:
+      - name: Fetch code
+        uses: actions/checkout@v4
+        with:
+          fetch-tags: false
+
+      - name: Add build environment
+        uses: Pathoschild/SMAPI-ModBuildWorkflow/add-build-environment@v1
+
+      - name: Set prerelease versions
+        uses: Pathoschild/SMAPI-ModBuildWorkflow/set-prerelease-versions@v1
+        if: github.ref != env.RELEASE_REF
+
+      - name: Build mods
+        run: dotnet build --configuration Release
+
+      - name: Upload release zips
+        uses: Pathoschild/SMAPI-ModBuildWorkflow/upload-release-artifacts@v1
+        with:
+          create_attestations: ${{ github.ref == env.RELEASE_REF }}
